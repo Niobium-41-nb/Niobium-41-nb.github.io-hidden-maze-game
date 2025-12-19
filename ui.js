@@ -22,7 +22,8 @@ class UIController {
             wallWidth: options.wallWidth || 4,
             colors: {
                 background: 'rgba(0, 0, 0, 0.5)',
-                wall: 'rgba(0, 0, 0, 0.5)',
+                wallExplored: 'rgba(0, 0, 0, 0.5)',      // 已探索墙壁颜色
+                wallUnexplored: 'rgba(0, 0, 0, 0.8)',    // 未探索墙壁颜色（更深的颜色）
                 start: '#10b981',
                 end: '#ef4444',
                 player: '#3b82f6',
@@ -352,6 +353,35 @@ class UIController {
     }
     
     /**
+     * 检查墙壁是否已探索
+     * @param {number} x - x坐标
+     * @param {number} y - y坐标
+     * @param {string} orientation - 墙壁方向 ('horizontal' 或 'vertical')
+     * @param {Maze} maze - 迷宫实例
+     * @returns {boolean} 墙壁是否已探索
+     */
+    isWallExplored(x, y, orientation, maze) {
+        if (!this.game) return false;
+        
+        const viewSystem = this.game.getViewSystem();
+        const { width, height } = maze.getSize();
+        
+        if (orientation === 'horizontal') {
+            // 水平墙壁：检查上方单元格(y-1)和下方单元格(y)是否已探索
+            const cellAbove = y > 0 ? viewSystem.isCellExplored(x, y-1) : false;
+            const cellBelow = y < height ? viewSystem.isCellExplored(x, y) : false;
+            return cellAbove || cellBelow;
+        } else if (orientation === 'vertical') {
+            // 垂直墙壁：检查左侧单元格(x-1)和右侧单元格(x)是否已探索
+            const cellLeft = x > 0 ? viewSystem.isCellExplored(x-1, y) : false;
+            const cellRight = x < width ? viewSystem.isCellExplored(x, y) : false;
+            return cellLeft || cellRight;
+        }
+        
+        return false;
+    }
+    
+    /**
      * 绘制迷宫墙壁
      * @param {Maze} maze - 迷宫实例
      */
@@ -361,7 +391,6 @@ class UIController {
         const wallWidth = this.config.wallWidth;
         const padding = 10;
         
-        this.ctx.strokeStyle = this.config.colors.wall;
         this.ctx.lineWidth = wallWidth;
         this.ctx.lineCap = 'square';
         
@@ -369,6 +398,14 @@ class UIController {
         for (let y = 0; y <= height; y++) {
             for (let x = 0; x < width; x++) {
                 if (maze.getWall('horizontal', y, x)) {
+                    // 检查墙壁是否已探索
+                    const isExplored = this.isWallExplored(x, y, 'horizontal', maze);
+                    
+                    // 根据探索状态设置颜色
+                    this.ctx.strokeStyle = isExplored ?
+                        this.config.colors.wallExplored :
+                        this.config.colors.wallUnexplored;
+                    
                     this.ctx.beginPath();
                     this.ctx.moveTo(
                         padding + x * cellSize,
@@ -387,6 +424,14 @@ class UIController {
         for (let y = 0; y < height; y++) {
             for (let x = 0; x <= width; x++) {
                 if (maze.getWall('vertical', y, x)) {
+                    // 检查墙壁是否已探索
+                    const isExplored = this.isWallExplored(x, y, 'vertical', maze);
+                    
+                    // 根据探索状态设置颜色
+                    this.ctx.strokeStyle = isExplored ?
+                        this.config.colors.wallExplored :
+                        this.config.colors.wallUnexplored;
+                    
                     this.ctx.beginPath();
                     this.ctx.moveTo(
                         padding + x * cellSize,
