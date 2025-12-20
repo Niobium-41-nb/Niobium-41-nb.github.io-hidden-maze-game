@@ -47,9 +47,12 @@ class UIController {
             startTime: null
         };
         
+        // Canvas缩放和偏移
+        this.canvasScale = 1;
+        this.canvasOffset = { x: 0, y: 0 };
+        
         // UI元素引用
         this.uiElements = {
-            moveCount: document.getElementById('moveCount'),
             exploreRate: document.getElementById('exploreRate'),
             gameStatus: document.getElementById('gameStatus'),
             mazeSize: document.getElementById('mazeSize'),
@@ -100,13 +103,42 @@ class UIController {
         const cellSize = this.config.cellSize;
         const padding = 20;
         
-        const canvasWidth = mazeSize * cellSize + padding * 2;
-        const canvasHeight = mazeSize * cellSize + padding * 2;
+        // 计算迷宫实际需要的尺寸
+        const mazeWidth = mazeSize * cellSize;
+        const mazeHeight = mazeSize * cellSize;
         
+        // 获取容器尺寸
+        const container = this.canvas.parentElement;
+        const containerWidth = container ? container.clientWidth : 800;
+        const containerHeight = container ? container.clientHeight : 600;
+        
+        // 计算最大可用尺寸（留出边距）
+        const maxWidth = containerWidth - padding * 2;
+        const maxHeight = containerHeight - padding * 2;
+        
+        // 计算缩放比例
+        const scaleX = maxWidth / mazeWidth;
+        const scaleY = maxHeight / mazeHeight;
+        const scale = Math.min(scaleX, scaleY, 1); // 不超过原始大小
+        
+        // 计算Canvas尺寸
+        const canvasWidth = Math.min(mazeWidth * scale + padding * 2, containerWidth);
+        const canvasHeight = Math.min(mazeHeight * scale + padding * 2, containerHeight);
+        
+        // 更新Canvas尺寸
         this.canvas.width = canvasWidth;
         this.canvas.height = canvasHeight;
         this.canvas.style.width = canvasWidth + 'px';
         this.canvas.style.height = canvasHeight + 'px';
+        
+        // 保存缩放信息
+        this.canvasScale = scale;
+        this.canvasOffset = {
+            x: (canvasWidth - mazeWidth * scale) / 2,
+            y: (canvasHeight - mazeHeight * scale) / 2
+        };
+        
+        console.log(`Canvas尺寸更新: ${canvasWidth}x${canvasHeight}, 缩放: ${scale.toFixed(2)}`);
     }
     
     /**
@@ -504,18 +536,19 @@ class UIController {
     
     /**
      * 绘制玩家
-     * @param {Object} position - 玩家位置
+     * @param {Object} position - 玩家位置（像素坐标）
      */
     drawPlayer(position) {
-        const cellSize = this.config.cellSize;
         const padding = 10;
-        const radius = cellSize * 0.25;
+        
+        // 如果position包含radius，使用它，否则使用默认值
+        const radius = position.radius || (this.config.cellSize * 0.25);
         
         this.ctx.fillStyle = this.config.colors.player;
         this.ctx.beginPath();
         this.ctx.arc(
-            padding + position.x * cellSize + cellSize / 2,
-            padding + position.y * cellSize + cellSize / 2,
+            padding + position.x,
+            padding + position.y,
             radius,
             0,
             Math.PI * 2
@@ -529,8 +562,8 @@ class UIController {
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(
             'P',
-            padding + position.x * cellSize + cellSize / 2,
-            padding + position.y * cellSize + cellSize / 2
+            padding + position.x,
+            padding + position.y
         );
     }
     
@@ -595,10 +628,6 @@ class UIController {
         
         const stats = this.game.getStats();
         
-        if (this.uiElements.moveCount) {
-            this.uiElements.moveCount.textContent = stats.moves;
-        }
-        
         if (this.uiElements.exploreRate) {
             this.uiElements.exploreRate.textContent = `${stats.exploreRate}%`;
         }
@@ -649,10 +678,6 @@ class UIController {
                     <p>你成功找到了迷宫的出口！</p>
                     
                     <div class="message-stats">
-                        <div class="stat-box">
-                            <span class="value">${data.moves}</span>
-                            <span class="label">步数</span>
-                        </div>
                         <div class="stat-box">
                             <span class="value">${data.time}s</span>
                             <span class="label">时间</span>
@@ -721,10 +746,6 @@ class UIController {
                     
                     <div class="message-stats">
                         <div class="stat-box">
-                            <span class="value">${data.moves}</span>
-                            <span class="label">步数</span>
-                        </div>
-                        <div class="stat-box">
                             <span class="value">${data.time}s</span>
                             <span class="label">时间</span>
                         </div>
@@ -782,24 +803,54 @@ class UIController {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        const cellSize = this.config.cellSize;
         const padding = 10;
         
-        // 计算点击的单元格
-        const cellX = Math.floor((x - padding) / cellSize);
-        const cellY = Math.floor((y - padding) / cellSize);
+        // 计算点击的像素位置（减去padding）
+        const clickX = x - padding;
+        const clickY = y - padding;
         
         // 获取玩家当前位置
         const playerPos = this.game.getPlayerPosition();
         
-        // 计算移动方向
-        const dx = cellX - playerPos.x;
-        const dy = cellY - playerPos.y;
+        // 计算点击方向向量
+        const dx = clickX - playerPos.x;
+        const dy = clickY - playerPos.y;
         
-        // 只允许移动到相邻单元格
-        if ((dx === 0 && Math.abs(dy) === 1) || (dy === 0 && Math.abs(dx) === 1)) {
-            this.handleMove(dx, dy);
+        // 如果点击位置很近，不移动
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 20) {
+            return;
         }
+        
+        // 归一化方向向量
+        const normX = dx / distance;
+        const normY = dy / distance;
+        
+        // 设置移动输入（模拟长按方向）
+        // 这里简化处理：直接移动到点击位置
+        // 实际应该设置移动方向，让玩家持续移动
+        this.handleMoveDirection(normX, normY);
+    }
+    
+    /**
+     * 处理移动方向（连续移动）
+     * @param {number} dirX - x方向
+     * @param {number} dirY - y方向
+     */
+    handleMoveDirection(dirX, dirY) {
+        if (!this.game) return;
+        
+        // 确定主要移动方向
+        let moveX = 0, moveY = 0;
+        
+        if (Math.abs(dirX) > Math.abs(dirY)) {
+            moveX = dirX > 0 ? 1 : -1;
+        } else {
+            moveY = dirY > 0 ? 1 : -1;
+        }
+        
+        // 使用旧的移动方法（兼容性）
+        this.handleMove(moveX, moveY);
     }
     
     /**
@@ -807,36 +858,39 @@ class UIController {
      * @param {KeyboardEvent} e - 键盘事件
      */
     handleKeyDown(e) {
-        if (!this.game || !this.game.state.isRunning || this.game.state.isPaused) {
-            return;
-        }
+        if (!this.game) return;
         
-        let dx = 0, dy = 0;
+        // 处理移动输入（长按支持）
+        let direction = null;
+        let pressed = true;
         
         switch (e.key) {
             case 'ArrowUp':
             case 'w':
             case 'W':
-                dy = -1;
+                direction = 'up';
                 break;
             case 'ArrowDown':
             case 's':
             case 'S':
-                dy = 1;
+                direction = 'down';
                 break;
             case 'ArrowLeft':
             case 'a':
             case 'A':
-                dx = -1;
+                direction = 'left';
                 break;
             case 'ArrowRight':
             case 'd':
             case 'D':
-                dx = 1;
+                direction = 'right';
                 break;
             case ' ':
-                this.game.togglePause();
-                this.updateStats();
+                if (this.game.state.isRunning) {
+                    this.game.togglePause();
+                    this.updateStats();
+                    this.render();
+                }
                 return;
             case 'r':
             case 'R':
@@ -844,13 +898,72 @@ class UIController {
                     this.handleRestartGame();
                 }
                 return;
+            case 'Escape':
+                if (this.game.state.isRunning) {
+                    this.game.togglePause();
+                    this.updateStats();
+                    this.render();
+                }
+                return;
             default:
                 return;
         }
         
-        if (dx !== 0 || dy !== 0) {
+        if (direction) {
             e.preventDefault();
-            this.handleMove(dx, dy);
+            
+            // 设置移动输入
+            if (this.game.setMoveInput) {
+                this.game.setMoveInput(direction, pressed);
+            } else {
+                // 回退到旧的移动方式
+                let dx = 0, dy = 0;
+                if (direction === 'up') dy = -1;
+                if (direction === 'down') dy = 1;
+                if (direction === 'left') dx = -1;
+                if (direction === 'right') dx = 1;
+                this.handleMove(dx, dy);
+            }
+        }
+    }
+    
+    /**
+     * 处理键盘释放事件
+     * @param {KeyboardEvent} e - 键盘事件
+     */
+    handleKeyUp(e) {
+        if (!this.game) return;
+        
+        let direction = null;
+        
+        switch (e.key) {
+            case 'ArrowUp':
+            case 'w':
+            case 'W':
+                direction = 'up';
+                break;
+            case 'ArrowDown':
+            case 's':
+            case 'S':
+                direction = 'down';
+                break;
+            case 'ArrowLeft':
+            case 'a':
+            case 'A':
+                direction = 'left';
+                break;
+            case 'ArrowRight':
+            case 'd':
+            case 'D':
+                direction = 'right';
+                break;
+            default:
+                return;
+        }
+        
+        if (direction && this.game.setMoveInput) {
+            e.preventDefault();
+            this.game.setMoveInput(direction, false);
         }
     }
     

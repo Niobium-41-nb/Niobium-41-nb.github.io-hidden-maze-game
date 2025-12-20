@@ -14,7 +14,9 @@ class Game {
             mazeSize: options.mazeSize || 15,
             viewMode: options.viewMode || 'permanent', // 'permanent' 或 'instant'
             cellSize: options.cellSize || 40,
-            showSolution: options.showSolution || false
+            showSolution: options.showSolution || false,
+            moveSpeed: options.moveSpeed || 5, // 移动速度（像素/帧）
+            playerRadius: options.playerRadius || 8 // 玩家半径（像素）
         };
         
         // 游戏状态
@@ -23,7 +25,6 @@ class Game {
             isPaused: false,
             isGameOver: false,
             isVictory: false,
-            moves: 0,
             startTime: null,
             endTime: null
         };
@@ -32,6 +33,7 @@ class Game {
         this.maze = null;
         this.player = null;
         this.viewSystem = null;
+        this.raycastSystem = null;
         
         // 渲染上下文
         this.canvas = null;
@@ -40,6 +42,14 @@ class Game {
         // 游戏数据
         this.exploredCells = new Set(); // 已探索的单元格
         this.visitedCells = new Set();  // 玩家访问过的单元格
+        
+        // 移动控制
+        this.moveInput = {
+            up: false,
+            down: false,
+            left: false,
+            right: false
+        };
         
         // 事件监听器
         this.eventListeners = {
@@ -66,12 +76,14 @@ class Game {
         const start = this.maze.getStart();
         const end = this.maze.getEnd();
         
-        // 创建玩家
+        // 创建玩家（使用像素坐标）
+        const cellSize = this.config.cellSize;
         this.player = {
-            x: start.x,
-            y: start.y,
-            prevX: start.x,
-            prevY: start.y
+            x: start.x * cellSize + cellSize / 2, // 单元格中心
+            y: start.y * cellSize + cellSize / 2,
+            prevX: start.x * cellSize + cellSize / 2,
+            prevY: start.y * cellSize + cellSize / 2,
+            radius: this.config.playerRadius
         };
         
         // 初始化已探索和已访问的单元格
@@ -83,10 +95,18 @@ class Game {
         this.exploredCells.add(startKey);
         this.visitedCells.add(startKey);
         
-        // 创建视野系统
+        // 创建视野系统（兼容旧系统）
         this.viewSystem = new ViewSystem({
             mode: this.config.viewMode,
             viewRange: 1 // 3×3视野范围
+        });
+        
+        // 创建射线检测系统
+        this.raycastSystem = new RaycastSystem({
+            rayCount: 180, // 射线数量
+            maxRayDistance: 5, // 最大射线距离
+            rayStep: 0.05, // 射线步进
+            fov: 360 // 360度视野
         });
         
         // 更新视野
@@ -98,9 +118,16 @@ class Game {
             isPaused: false,
             isGameOver: false,
             isVictory: false,
-            moves: 0,
             startTime: null,
             endTime: null
+        };
+        
+        // 重置移动输入
+        this.moveInput = {
+            up: false,
+            down: false,
+            left: false,
+            right: false
         };
     }
     
@@ -151,100 +178,228 @@ class Game {
     }
     
     /**
-     * 移动玩家
-     * @param {number} dx - x方向移动量 (-1, 0, 1)
-     * @param {number} dy - y方向移动量 (-1, 0, 1)
-     * @returns {boolean} 移动是否成功
+     * 设置移动输入
+     * @param {string} direction - 方向 ('up', 'down', 'left', 'right')
+     * @param {boolean} pressed - 是否按下
      */
-    movePlayer(dx, dy) {
+    setMoveInput(direction, pressed) {
+        if (direction in this.moveInput) {
+            this.moveInput[direction] = pressed;
+        }
+    }
+    
+    /**
+     * 更新玩家位置（基于当前输入）
+     * @returns {boolean} 是否移动了
+     */
+    updatePlayerPosition() {
         // 检查游戏状态
         if (!this.state.isRunning || this.state.isPaused || this.state.isGameOver) {
             return false;
         }
         
-        // 检查移动是否有效（只能移动一个单元格）
-        if ((dx === 0 && dy === 0) || Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        // 计算移动向量
+        let dx = 0, dy = 0;
+        if (this.moveInput.up) dy -= 1;
+        if (this.moveInput.down) dy += 1;
+        if (this.moveInput.left) dx -= 1;
+        if (this.moveInput.right) dx += 1;
+        
+        // 如果没有输入，不移动
+        if (dx === 0 && dy === 0) {
             return false;
+        }
+        
+        // 归一化对角线移动
+        const length = Math.sqrt(dx * dx + dy * dy);
+        if (length > 0) {
+            dx /= length;
+            dy /= length;
         }
         
         // 计算新位置
-        const newX = this.player.x + dx;
-        const newY = this.player.y + dy;
+        const speed = this.config.moveSpeed;
+        const newX = this.player.x + dx * speed;
+        const newY = this.player.y + dy * speed;
         
-        // 检查是否在迷宫范围内
-        if (newX < 0 || newX >= this.config.mazeSize || 
-            newY < 0 || newY >= this.config.mazeSize) {
-            return false;
-        }
-        
-        // 检查是否可以移动（没有墙壁阻挡）
-        if (!this.maze.canMove(this.player.x, this.player.y, dx, dy)) {
-            return false;
-        }
-        
-        // 保存旧位置
-        this.player.prevX = this.player.x;
-        this.player.prevY = this.player.y;
-        
-        // 更新玩家位置
-        this.player.x = newX;
-        this.player.y = newY;
-        
-        // 更新移动计数
-        this.state.moves++;
-        
-        // 标记单元格为已访问
-        const cellKey = this.getCellKey(newX, newY);
-        this.visitedCells.add(cellKey);
-        
-        // 更新视野
-        this.updateVisibility();
-        
-        // 触发移动事件
-        this.triggerEvent('onMove', {
-            from: { x: this.player.prevX, y: this.player.prevY },
-            to: { x: newX, y: newY },
-            moves: this.state.moves
-        });
-        
-        // 检查是否到达终点
-        const end = this.maze.getEnd();
-        if (newX === end.x && newY === end.y) {
-            this.victory();
+        // 检查是否可以移动到新位置
+        if (this.canMoveTo(newX, newY)) {
+            // 保存旧位置
+            this.player.prevX = this.player.x;
+            this.player.prevY = this.player.y;
+            
+            // 更新玩家位置
+            this.player.x = newX;
+            this.player.y = newY;
+            
+            // 标记当前单元格为已访问
+            const cellSize = this.config.cellSize;
+            const cellX = Math.floor(this.player.x / cellSize);
+            const cellY = Math.floor(this.player.y / cellSize);
+            const cellKey = this.getCellKey(cellX, cellY);
+            this.visitedCells.add(cellKey);
+            
+            // 触发移动事件
+            this.triggerEvent('onMove', {
+                from: { x: this.player.prevX, y: this.player.prevY },
+                to: { x: newX, y: newY }
+            });
+            
+            // 更新视野
+            this.updateVisibility();
+            
+            // 检查是否到达终点
+            const end = this.maze.getEnd();
+            const endX = end.x * cellSize + cellSize / 2;
+            const endY = end.y * cellSize + cellSize / 2;
+            const distanceToEnd = Math.sqrt(
+                (this.player.x - endX) ** 2 +
+                (this.player.y - endY) ** 2
+            );
+            
+            if (distanceToEnd < this.player.radius * 2) {
+                this.victory();
+            }
+            
             return true;
         }
         
-        return true;
+        return false;
+    }
+    
+    /**
+     * 检查是否可以移动到指定位置
+     * @param {number} x - x坐标（像素）
+     * @param {number} y - y坐标（像素）
+     * @returns {boolean} 是否可以移动
+     */
+    canMoveTo(x, y) {
+        const cellSize = this.config.cellSize;
+        const radius = this.player.radius;
+        
+        // 检查是否在迷宫范围内（考虑玩家半径）
+        const mazeWidth = this.config.mazeSize * cellSize;
+        const mazeHeight = this.config.mazeSize * cellSize;
+        
+        if (x - radius < 0 || x + radius > mazeWidth ||
+            y - radius < 0 || y + radius > mazeHeight) {
+            return false;
+        }
+        
+        // 检查与墙壁的碰撞
+        return !this.checkWallCollision(x, y, radius, cellSize);
+    }
+    
+    /**
+     * 检查墙壁碰撞
+     * @param {number} x - x坐标（像素）
+     * @param {number} y - y坐标（像素）
+     * @param {number} radius - 碰撞半径
+     * @param {number} cellSize - 单元格大小
+     * @returns {boolean} 是否发生碰撞
+     */
+    checkWallCollision(x, y, radius, cellSize) {
+        // 计算玩家所在的格子
+        const cellX = Math.floor(x / cellSize);
+        const cellY = Math.floor(y / cellSize);
+        
+        // 检查周围3×3区域的墙壁
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const checkX = cellX + dx;
+                const checkY = cellY + dy;
+                
+                // 检查水平墙壁（上边界）
+                if (this.maze.getWall('horizontal', checkY, checkX)) {
+                    const wallY = checkY * cellSize;
+                    const wallX1 = checkX * cellSize;
+                    const wallX2 = (checkX + 1) * cellSize;
+                    
+                    // 检查与水平墙壁的距离
+                    const distanceToWall = Math.abs(y - wallY);
+                    if (distanceToWall < radius && x >= wallX1 && x <= wallX2) {
+                        return true;
+                    }
+                }
+                
+                // 检查水平墙壁（下边界）
+                if (this.maze.getWall('horizontal', checkY + 1, checkX)) {
+                    const wallY = (checkY + 1) * cellSize;
+                    const wallX1 = checkX * cellSize;
+                    const wallX2 = (checkX + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(y - wallY);
+                    if (distanceToWall < radius && x >= wallX1 && x <= wallX2) {
+                        return true;
+                    }
+                }
+                
+                // 检查垂直墙壁（左边界）
+                if (this.maze.getWall('vertical', checkY, checkX)) {
+                    const wallX = checkX * cellSize;
+                    const wallY1 = checkY * cellSize;
+                    const wallY2 = (checkY + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(x - wallX);
+                    if (distanceToWall < radius && y >= wallY1 && y <= wallY2) {
+                        return true;
+                    }
+                }
+                
+                // 检查垂直墙壁（右边界）
+                if (this.maze.getWall('vertical', checkY, checkX + 1)) {
+                    const wallX = (checkX + 1) * cellSize;
+                    const wallY1 = checkY * cellSize;
+                    const wallY2 = (checkY + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(x - wallX);
+                    if (distanceToWall < radius && y >= wallY1 && y <= wallY2) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
     }
     
     /**
      * 更新视野可见性
      */
     updateVisibility() {
-        const { x, y } = this.player;
+        const cellSize = this.config.cellSize;
         
-        // 使用ViewSystem更新视野
-        this.viewSystem.update(x, y, this.maze);
-        
-        // 获取当前可见的单元格
-        const visibleCells = this.viewSystem.getVisibleCells();
-        
-        // 更新已探索单元格
-        for (const cell of visibleCells) {
-            const cellKey = this.getCellKey(cell.x, cell.y);
+        // 使用射线检测系统更新视野
+        if (this.raycastSystem) {
+            this.raycastSystem.update(this.player.x, this.player.y, this.maze, cellSize);
             
-            // 标记为已探索
-            if (!this.exploredCells.has(cellKey)) {
-                this.exploredCells.add(cellKey);
+            // 获取可见单元格
+            const visibleCells = this.raycastSystem.getVisibleCells();
+            
+            // 更新已探索单元格
+            for (const cell of visibleCells) {
+                const cellKey = this.getCellKey(cell.x, cell.y);
                 
-                // 触发单元格探索事件
-                this.triggerEvent('onCellExplored', {
-                    x: cell.x,
-                    y: cell.y,
-                    totalExplored: this.exploredCells.size,
-                    totalCells: this.config.mazeSize * this.config.mazeSize
-                });
+                // 标记为已探索
+                if (!this.exploredCells.has(cellKey)) {
+                    this.exploredCells.add(cellKey);
+                    
+                    // 触发单元格探索事件
+                    this.triggerEvent('onCellExplored', {
+                        x: cell.x,
+                        y: cell.y,
+                        totalExplored: this.exploredCells.size,
+                        totalCells: this.config.mazeSize * this.config.mazeSize
+                    });
+                }
             }
+        }
+        
+        // 同时更新旧视野系统（兼容性）
+        if (this.viewSystem) {
+            const playerCellX = Math.floor(this.player.x / cellSize);
+            const playerCellY = Math.floor(this.player.y / cellSize);
+            this.viewSystem.update(playerCellX, playerCellY, this.maze);
         }
     }
     
@@ -363,14 +518,13 @@ class Game {
         
         // 触发胜利事件
         this.triggerEvent('onVictory', {
-            moves: this.state.moves,
             time: gameTime,
             exploreRate: exploreRate,
             exploredCells: this.exploredCells.size,
             totalCells: totalCells
         });
         
-        console.log(`游戏胜利！步数: ${this.state.moves}, 时间: ${gameTime}秒, 探索率: ${exploreRate}%`);
+        console.log(`游戏胜利！时间: ${gameTime}秒, 探索率: ${exploreRate}%`);
     }
     
     /**
@@ -384,7 +538,6 @@ class Game {
         
         // 触发游戏结束事件
         this.triggerEvent('onGameOver', {
-            moves: this.state.moves,
             time: Math.floor((this.state.endTime - this.state.startTime) / 1000)
         });
         
@@ -396,14 +549,16 @@ class Game {
      * @returns {Object} 游戏状态
      */
     getGameState() {
+        const totalCells = this.config.mazeSize * this.config.mazeSize;
+        const exploreRate = Math.round((this.exploredCells.size / totalCells) * 100);
+        
         return {
             ...this.state,
             playerPosition: { ...this.player },
             endPosition: this.maze.getEnd(),
-            moves: this.state.moves,
             exploredCells: this.exploredCells.size,
-            totalCells: this.config.mazeSize * this.config.mazeSize,
-            exploreRate: Math.round((this.exploredCells.size / (this.config.mazeSize * this.config.mazeSize)) * 100)
+            totalCells: totalCells,
+            exploreRate: exploreRate
         };
     }
     
@@ -416,12 +571,10 @@ class Game {
         const exploreRate = Math.round((this.exploredCells.size / totalCells) * 100);
         
         return {
-            moves: this.state.moves,
             explored: this.exploredCells.size,
             total: totalCells,
             exploreRate: exploreRate,
-            visited: this.visitedCells.size,
-            efficiency: this.state.moves > 0 ? Math.round((this.visitedCells.size / this.state.moves) * 100) : 0
+            visited: this.visitedCells.size
         };
     }
     

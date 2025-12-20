@@ -44,6 +44,9 @@ function initGame() {
     // 添加CSS样式
     addCustomStyles();
     
+    // 启动游戏循环
+    startGameLoop();
+    
     console.log('游戏初始化完成！');
 }
 
@@ -550,6 +553,34 @@ function addDeveloperTools() {
 }
 
 /**
+ * 启动游戏循环
+ */
+function startGameLoop() {
+    let lastTime = 0;
+    
+    function gameLoop(timestamp) {
+        const deltaTime = timestamp - lastTime;
+        
+        if (game && game.state.isRunning && !game.state.isPaused && !game.state.isGameOver) {
+            // 更新玩家位置（连续移动）
+            if (game.updatePlayerPosition) {
+                const moved = game.updatePlayerPosition();
+                if (moved && uiController) {
+                    // 更新UI
+                    uiController.updateStats();
+                    uiController.render();
+                }
+            }
+        }
+        
+        lastTime = timestamp;
+        requestAnimationFrame(gameLoop);
+    }
+    
+    requestAnimationFrame(gameLoop);
+}
+
+/**
  * 页面加载完成后初始化游戏
  */
 document.addEventListener('DOMContentLoaded', () => {
@@ -562,10 +593,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // 添加开发者工具
     addDeveloperTools();
     
+    // 绑定键盘释放事件
+    document.addEventListener('keyup', (e) => {
+        if (uiController && uiController.handleKeyUp) {
+            uiController.handleKeyUp(e);
+        }
+    });
+    
     // 显示欢迎消息
     console.log('欢迎来到隐藏迷宫游戏！');
-    console.log('使用方向键或WASD移动玩家');
-    console.log('点击迷宫中的单元格也可以移动');
+    console.log('使用方向键或WASD移动玩家（长按连续移动）');
+    console.log('点击迷宫中的位置可以移动');
     console.log('ESC键暂停/继续游戏');
     console.log('Ctrl+S保存游戏，Ctrl+L加载游戏');
     

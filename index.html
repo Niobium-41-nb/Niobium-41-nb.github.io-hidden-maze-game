@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+a<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -73,10 +73,6 @@
                             <h4><i class="fas fa-user"></i> 玩家状态</h4>
                             <div class="stats">
                                 <div class="stat-item">
-                                    <i class="fas fa-shoe-prints"></i>
-                                    <span>步数: <span id="moveCount">0</span></span>
-                                </div>
-                                <div class="stat-item">
                                     <i class="fas fa-bullseye"></i>
                                     <span>探索率: <span id="exploreRate">0%</span></span>
                                 </div>
@@ -128,12 +124,13 @@
                     <h3><i class="fas fa-info-circle"></i> 游戏说明</h3>
                     <ul>
                         <li><strong>目标:</strong> 从起点(绿色)到达终点(红色)</li>
-                        <li><strong>移动:</strong> 点击相邻单元格或使用方向按钮</li>
-                        <li><strong>视野:</strong> 只能看到当前位置周围的区域</li>
-                        <li><strong>模式:</strong> 
+                        <li><strong>移动:</strong> 使用方向键/WASD长按连续移动，或点击目标位置</li>
+                        <li><strong>视野:</strong> 360度射线视野，只能看到视线可达的区域</li>
+                        <li><strong>模式:</strong>
                             <span class="mode-desc permanent">永久模式 - 已探索区域永久可见</span>
                             <span class="mode-desc instant">即时模式 - 只显示当前视野</span>
                         </li>
+                        <li><strong>新特性:</strong> 连续坐标系统，精细移动，真实视野模拟</li>
                     </ul>
                 </div>
 
@@ -178,6 +175,7 @@
     <!-- 游戏脚本 -->
     <script src="maze.js"></script>
     <script src="view.js"></script>
+    <script src="raycast.js"></script>
     <script src="game.js"></script>
     <script src="ui.js"></script>
     <script src="main.js"></script>
