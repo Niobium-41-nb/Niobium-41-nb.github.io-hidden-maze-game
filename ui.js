@@ -20,6 +20,8 @@ class UIController {
         this.config = {
             cellSize: options.cellSize || 40,
             wallWidth: options.wallWidth || 4,
+            enableScroll: options.enableScroll !== undefined ? options.enableScroll : true, // 启用滚动
+            maxCanvasSize: options.maxCanvasSize || 800, // 最大Canvas尺寸
             colors: {
                 background: 'rgba(0, 0, 0, 0.5)',
                 wallExplored: 'rgba(0, 0, 0, 0.5)',      // 已探索墙壁颜色
@@ -116,14 +118,39 @@ class UIController {
         const maxWidth = containerWidth - padding * 2;
         const maxHeight = containerHeight - padding * 2;
         
-        // 计算缩放比例
-        const scaleX = maxWidth / mazeWidth;
-        const scaleY = maxHeight / mazeHeight;
-        const scale = Math.min(scaleX, scaleY, 1); // 不超过原始大小
+        // 判断是否需要滚动
+        const needsScroll = this.config.enableScroll &&
+                           (mazeWidth > this.config.maxCanvasSize || mazeHeight > this.config.maxCanvasSize);
         
-        // 计算Canvas尺寸
-        const canvasWidth = Math.min(mazeWidth * scale + padding * 2, containerWidth);
-        const canvasHeight = Math.min(mazeHeight * scale + padding * 2, containerHeight);
+        let scale = 1;
+        let canvasWidth, canvasHeight;
+        
+        if (needsScroll) {
+            // 滚动模式：保持原始大小，允许滚动
+            scale = 1;
+            canvasWidth = Math.min(mazeWidth + padding * 2, this.config.maxCanvasSize);
+            canvasHeight = Math.min(mazeHeight + padding * 2, this.config.maxCanvasSize);
+            
+            // 更新容器样式以支持滚动
+            if (container) {
+                container.style.overflow = 'auto';
+                container.style.maxHeight = '80vh';
+            }
+        } else {
+            // 自适应模式：缩放以适应容器
+            const scaleX = maxWidth / mazeWidth;
+            const scaleY = maxHeight / mazeHeight;
+            scale = Math.min(scaleX, scaleY, 1); // 不超过原始大小
+            
+            canvasWidth = Math.min(mazeWidth * scale + padding * 2, containerWidth);
+            canvasHeight = Math.min(mazeHeight * scale + padding * 2, containerHeight);
+            
+            // 恢复容器样式
+            if (container) {
+                container.style.overflow = 'hidden';
+                container.style.maxHeight = 'none';
+            }
+        }
         
         // 更新Canvas尺寸
         this.canvas.width = canvasWidth;
@@ -138,7 +165,33 @@ class UIController {
             y: (canvasHeight - mazeHeight * scale) / 2
         };
         
-        console.log(`Canvas尺寸更新: ${canvasWidth}x${canvasHeight}, 缩放: ${scale.toFixed(2)}`);
+        console.log(`Canvas尺寸更新: ${canvasWidth}x${canvasHeight}, 缩放: ${scale.toFixed(2)}, 模式: ${needsScroll ? '滚动' : '自适应'}`);
+    }
+    
+    /**
+     * 将迷宫坐标转换为Canvas坐标
+     * @param {number} x - 迷宫x坐标（像素）
+     * @param {number} y - 迷宫y坐标（像素）
+     * @returns {Object} Canvas坐标
+     */
+    toCanvasCoords(x, y) {
+        return {
+            x: this.canvasOffset.x + x * this.canvasScale,
+            y: this.canvasOffset.y + y * this.canvasScale
+        };
+    }
+    
+    /**
+     * 将Canvas坐标转换为迷宫坐标
+     * @param {number} x - Canvas x坐标
+     * @param {number} y - Canvas y坐标
+     * @returns {Object} 迷宫坐标
+     */
+    toMazeCoords(x, y) {
+        return {
+            x: (x - this.canvasOffset.x) / this.canvasScale,
+            y: (y - this.canvasOffset.y) / this.canvasScale
+        };
     }
     
     /**
@@ -317,26 +370,35 @@ class UIController {
      * 绘制网格
      */
     drawGrid() {
-        const { width, height } = this.canvas;
+        if (!this.game) return;
+        
+        const mazeSize = this.game.config.mazeSize;
         const cellSize = this.config.cellSize;
-        const padding = 10;
         
         this.ctx.strokeStyle = this.config.colors.grid;
         this.ctx.lineWidth = 1;
         
         // 垂直线
-        for (let x = padding; x <= width - padding; x += cellSize) {
+        for (let x = 0; x <= mazeSize; x++) {
+            const canvasX = this.canvasOffset.x + x * cellSize * this.canvasScale;
+            const startY = this.canvasOffset.y;
+            const endY = this.canvasOffset.y + mazeSize * cellSize * this.canvasScale;
+            
             this.ctx.beginPath();
-            this.ctx.moveTo(x, padding);
-            this.ctx.lineTo(x, height - padding);
+            this.ctx.moveTo(canvasX, startY);
+            this.ctx.lineTo(canvasX, endY);
             this.ctx.stroke();
         }
         
         // 水平线
-        for (let y = padding; y <= height - padding; y += cellSize) {
+        for (let y = 0; y <= mazeSize; y++) {
+            const canvasY = this.canvasOffset.y + y * cellSize * this.canvasScale;
+            const startX = this.canvasOffset.x;
+            const endX = this.canvasOffset.x + mazeSize * cellSize * this.canvasScale;
+            
             this.ctx.beginPath();
-            this.ctx.moveTo(padding, y);
-            this.ctx.lineTo(width - padding, y);
+            this.ctx.moveTo(startX, canvasY);
+            this.ctx.lineTo(endX, canvasY);
             this.ctx.stroke();
         }
     }
@@ -350,11 +412,14 @@ class UIController {
         const maze = this.game.getMaze();
         const { width, height } = maze.getSize();
         const cellSize = this.config.cellSize;
-        const padding = 10;
         const viewSystem = this.game.getViewSystem();
         
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
+                // 计算Canvas坐标
+                const canvasPos = this.toCanvasCoords(x * cellSize, y * cellSize);
+                const scaledCellSize = cellSize * this.canvasScale;
+                
                 if (viewSystem.isCellVisible(x, y)) {
                     // 当前可见的单元格
                     if (this.game.isCellExplored(x, y)) {
@@ -365,19 +430,19 @@ class UIController {
                         this.ctx.fillStyle = this.config.colors.unexplored;
                     }
                     this.ctx.fillRect(
-                        padding + x * cellSize,
-                        padding + y * cellSize,
-                        cellSize,
-                        cellSize
+                        canvasPos.x,
+                        canvasPos.y,
+                        scaledCellSize,
+                        scaledCellSize
                     );
                 } else {
                     // 不可见的单元格 - 严格隐藏（使用背景色）
                     this.ctx.fillStyle = this.config.colors.background;
                     this.ctx.fillRect(
-                        padding + x * cellSize,
-                        padding + y * cellSize,
-                        cellSize,
-                        cellSize
+                        canvasPos.x,
+                        canvasPos.y,
+                        scaledCellSize,
+                        scaledCellSize
                     );
                 }
             }
@@ -420,8 +485,7 @@ class UIController {
     drawWalls(maze) {
         const { width, height } = maze.getSize();
         const cellSize = this.config.cellSize;
-        const wallWidth = this.config.wallWidth;
-        const padding = 10;
+        const wallWidth = this.config.wallWidth * this.canvasScale;
         
         this.ctx.lineWidth = wallWidth;
         this.ctx.lineCap = 'square';
@@ -438,15 +502,13 @@ class UIController {
                         this.config.colors.wallExplored :
                         this.config.colors.wallUnexplored;
                     
+                    // 计算Canvas坐标
+                    const startPos = this.toCanvasCoords(x * cellSize, y * cellSize);
+                    const endPos = this.toCanvasCoords((x + 1) * cellSize, y * cellSize);
+                    
                     this.ctx.beginPath();
-                    this.ctx.moveTo(
-                        padding + x * cellSize,
-                        padding + y * cellSize
-                    );
-                    this.ctx.lineTo(
-                        padding + (x + 1) * cellSize,
-                        padding + y * cellSize
-                    );
+                    this.ctx.moveTo(startPos.x, startPos.y);
+                    this.ctx.lineTo(endPos.x, endPos.y);
                     this.ctx.stroke();
                 }
             }
@@ -464,15 +526,13 @@ class UIController {
                         this.config.colors.wallExplored :
                         this.config.colors.wallUnexplored;
                     
+                    // 计算Canvas坐标
+                    const startPos = this.toCanvasCoords(x * cellSize, y * cellSize);
+                    const endPos = this.toCanvasCoords(x * cellSize, (y + 1) * cellSize);
+                    
                     this.ctx.beginPath();
-                    this.ctx.moveTo(
-                        padding + x * cellSize,
-                        padding + y * cellSize
-                    );
-                    this.ctx.lineTo(
-                        padding + x * cellSize,
-                        padding + (y + 1) * cellSize
-                    );
+                    this.ctx.moveTo(startPos.x, startPos.y);
+                    this.ctx.lineTo(endPos.x, endPos.y);
                     this.ctx.stroke();
                 }
             }
@@ -486,15 +546,19 @@ class UIController {
      */
     drawStartAndEnd(start, end) {
         const cellSize = this.config.cellSize;
-        const padding = 10;
-        const radius = cellSize * 0.3;
+        const radius = cellSize * 0.3 * this.canvasScale;
         
         // 绘制起点（绿色）
+        const startCanvasPos = this.toCanvasCoords(
+            start.x * cellSize + cellSize / 2,
+            start.y * cellSize + cellSize / 2
+        );
+        
         this.ctx.fillStyle = this.config.colors.start;
         this.ctx.beginPath();
         this.ctx.arc(
-            padding + start.x * cellSize + cellSize / 2,
-            padding + start.y * cellSize + cellSize / 2,
+            startCanvasPos.x,
+            startCanvasPos.y,
             radius,
             0,
             Math.PI * 2
@@ -502,11 +566,16 @@ class UIController {
         this.ctx.fill();
         
         // 绘制终点（红色）
+        const endCanvasPos = this.toCanvasCoords(
+            end.x * cellSize + cellSize / 2,
+            end.y * cellSize + cellSize / 2
+        );
+        
         this.ctx.fillStyle = this.config.colors.end;
         this.ctx.beginPath();
         this.ctx.arc(
-            padding + end.x * cellSize + cellSize / 2,
-            padding + end.y * cellSize + cellSize / 2,
+            endCanvasPos.x,
+            endCanvasPos.y,
             radius,
             0,
             Math.PI * 2
@@ -515,22 +584,22 @@ class UIController {
         
         // 添加文字标签
         this.ctx.fillStyle = 'white';
-        this.ctx.font = 'bold 12px Arial';
+        this.ctx.font = `bold ${12 * this.canvasScale}px Arial`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         
         // 起点标签
         this.ctx.fillText(
             '起点',
-            padding + start.x * cellSize + cellSize / 2,
-            padding + start.y * cellSize + cellSize / 2
+            startCanvasPos.x,
+            startCanvasPos.y
         );
         
         // 终点标签
         this.ctx.fillText(
             '终点',
-            padding + end.x * cellSize + cellSize / 2,
-            padding + end.y * cellSize + cellSize / 2
+            endCanvasPos.x,
+            endCanvasPos.y
         );
     }
     
@@ -539,16 +608,17 @@ class UIController {
      * @param {Object} position - 玩家位置（像素坐标）
      */
     drawPlayer(position) {
-        const padding = 10;
-        
         // 如果position包含radius，使用它，否则使用默认值
-        const radius = position.radius || (this.config.cellSize * 0.25);
+        const radius = (position.radius || (this.config.cellSize * 0.25)) * this.canvasScale;
+        
+        // 转换玩家位置到Canvas坐标
+        const canvasPos = this.toCanvasCoords(position.x, position.y);
         
         this.ctx.fillStyle = this.config.colors.player;
         this.ctx.beginPath();
         this.ctx.arc(
-            padding + position.x,
-            padding + position.y,
+            canvasPos.x,
+            canvasPos.y,
             radius,
             0,
             Math.PI * 2
@@ -557,13 +627,13 @@ class UIController {
         
         // 添加玩家图标
         this.ctx.fillStyle = 'white';
-        this.ctx.font = 'bold 14px Arial';
+        this.ctx.font = `bold ${14 * this.canvasScale}px Arial`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(
             'P',
-            padding + position.x,
-            padding + position.y
+            canvasPos.x,
+            canvasPos.y
         );
     }
     
@@ -577,11 +647,10 @@ class UIController {
         if (path.length < 2) return;
         
         const cellSize = this.config.cellSize;
-        const padding = 10;
-        const radius = cellSize * 0.1;
+        const radius = cellSize * 0.1 * this.canvasScale;
         
         this.ctx.strokeStyle = this.config.colors.path;
-        this.ctx.lineWidth = 3;
+        this.ctx.lineWidth = 3 * this.canvasScale;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         
@@ -589,13 +658,15 @@ class UIController {
         this.ctx.beginPath();
         for (let i = 0; i < path.length; i++) {
             const point = path[i];
-            const x = padding + point.x * cellSize + cellSize / 2;
-            const y = padding + point.y * cellSize + cellSize / 2;
+            const canvasPos = this.toCanvasCoords(
+                point.x * cellSize + cellSize / 2,
+                point.y * cellSize + cellSize / 2
+            );
             
             if (i === 0) {
-                this.ctx.moveTo(x, y);
+                this.ctx.moveTo(canvasPos.x, canvasPos.y);
             } else {
-                this.ctx.lineTo(x, y);
+                this.ctx.lineTo(canvasPos.x, canvasPos.y);
             }
         }
         this.ctx.stroke();
@@ -603,12 +674,14 @@ class UIController {
         // 绘制路径点
         for (let i = 0; i < path.length; i++) {
             const point = path[i];
-            const x = padding + point.x * cellSize + cellSize / 2;
-            const y = padding + point.y * cellSize + cellSize / 2;
+            const canvasPos = this.toCanvasCoords(
+                point.x * cellSize + cellSize / 2,
+                point.y * cellSize + cellSize / 2
+            );
             
             this.ctx.fillStyle = this.config.colors.path;
             this.ctx.beginPath();
-            this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+            this.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
             this.ctx.fill();
         }
     }
@@ -803,18 +876,15 @@ class UIController {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        const padding = 10;
-        
-        // 计算点击的像素位置（减去padding）
-        const clickX = x - padding;
-        const clickY = y - padding;
+        // 将Canvas坐标转换为迷宫坐标
+        const mazeCoords = this.toMazeCoords(x, y);
         
         // 获取玩家当前位置
         const playerPos = this.game.getPlayerPosition();
         
-        // 计算点击方向向量
-        const dx = clickX - playerPos.x;
-        const dy = clickY - playerPos.y;
+        // 计算点击方向向量（在迷宫坐标系中）
+        const dx = mazeCoords.x - playerPos.x;
+        const dy = mazeCoords.y - playerPos.y;
         
         // 如果点击位置很近，不移动
         const distance = Math.sqrt(dx * dx + dy * dy);
@@ -827,8 +897,6 @@ class UIController {
         const normY = dy / distance;
         
         // 设置移动输入（模拟长按方向）
-        // 这里简化处理：直接移动到点击位置
-        // 实际应该设置移动方向，让玩家持续移动
         this.handleMoveDirection(normX, normY);
     }
     
@@ -1130,7 +1198,10 @@ class UIController {
      * 处理窗口大小变化
      */
     handleResize() {
-        // 可以在这里添加响应式调整
+        // 更新Canvas尺寸
+        this.updateCanvasSize();
+        
+        // 重新渲染
         this.render();
     }
     
