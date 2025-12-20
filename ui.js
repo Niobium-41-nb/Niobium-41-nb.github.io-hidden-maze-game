@@ -404,7 +404,7 @@ class UIController {
     }
     
     /**
-     * 绘制已探索区域
+     * 绘制已探索区域（像素级可见区域）
      */
     drawExploredAreas() {
         if (!this.game) return;
@@ -413,7 +413,122 @@ class UIController {
         const { width, height } = maze.getSize();
         const cellSize = this.config.cellSize;
         const viewSystem = this.game.getViewSystem();
+        const raycastSystem = this.game.raycastSystem;
         
+        // 方法1：绘制像素级可见区域（使用射线检测系统的可见点）
+        if (raycastSystem && raycastSystem.getVisiblePoints) {
+            this.drawPixelVisibleAreas(raycastSystem);
+        } else {
+            // 方法2：回退到基于格子的可见区域绘制
+            this.drawCellBasedVisibleAreas(maze, width, height, cellSize, viewSystem);
+        }
+    }
+    
+    /**
+     * 绘制像素级可见区域
+     * @param {RaycastSystem} raycastSystem - 射线检测系统
+     */
+    drawPixelVisibleAreas(raycastSystem) {
+        const visiblePoints = raycastSystem.getVisiblePoints();
+        
+        if (visiblePoints.length === 0) return;
+        
+        // 方法1：绘制可见区域多边形（更连续的区域）
+        this.drawVisiblePolygon(visiblePoints);
+        
+        // 方法2：绘制可见点（用于调试）
+        // this.drawVisiblePoints(visiblePoints);
+        
+        // 同时绘制已探索的单元格（兼容性）
+        this.drawExploredCells();
+    }
+    
+    /**
+     * 绘制可见区域多边形
+     * @param {Array} visiblePoints - 可见点数组
+     */
+    drawVisiblePolygon(visiblePoints) {
+        if (visiblePoints.length < 3) return;
+        
+        // 按角度排序可见点，形成多边形
+        const playerPos = this.game.getPlayerPosition();
+        const playerCanvasPos = this.toCanvasCoords(playerPos.x, playerPos.y);
+        
+        // 计算每个点相对于玩家的角度
+        const pointsWithAngle = visiblePoints.map(point => {
+            const canvasPos = this.toCanvasCoords(point.x, point.y);
+            const dx = canvasPos.x - playerCanvasPos.x;
+            const dy = canvasPos.y - playerCanvasPos.y;
+            const angle = Math.atan2(dy, dx);
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            return {
+                ...point,
+                canvasX: canvasPos.x,
+                canvasY: canvasPos.y,
+                angle: angle,
+                distance: distance
+            };
+        });
+        
+        // 按角度排序
+        pointsWithAngle.sort((a, b) => a.angle - b.angle);
+        
+        // 创建多边形路径
+        this.ctx.fillStyle = this.config.colors.explored;
+        this.ctx.beginPath();
+        
+        // 从玩家位置开始
+        this.ctx.moveTo(playerCanvasPos.x, playerCanvasPos.y);
+        
+        // 添加所有可见点
+        for (const point of pointsWithAngle) {
+            this.ctx.lineTo(point.canvasX, point.canvasY);
+        }
+        
+        // 闭合多边形
+        this.ctx.closePath();
+        this.ctx.fill();
+        
+        // 添加半透明效果
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        this.ctx.fill();
+    }
+    
+    /**
+     * 绘制可见点（用于调试）
+     * @param {Array} visiblePoints - 可见点数组
+     */
+    drawVisiblePoints(visiblePoints) {
+        const pointRadius = 2 * this.canvasScale; // 可见点半径
+        
+        // 绘制可见点
+        this.ctx.fillStyle = this.config.colors.explored;
+        
+        for (const point of visiblePoints) {
+            const canvasPos = this.toCanvasCoords(point.x, point.y);
+            
+            this.ctx.beginPath();
+            this.ctx.arc(
+                canvasPos.x,
+                canvasPos.y,
+                pointRadius,
+                0,
+                Math.PI * 2
+            );
+            this.ctx.fill();
+        }
+    }
+    
+    /**
+     * 绘制基于格子的可见区域
+     * @param {Maze} maze - 迷宫实例
+     * @param {number} width - 迷宫宽度
+     * @param {number} height - 迷宫高度
+     * @param {number} cellSize - 单元格大小
+     * @param {ViewSystem} viewSystem - 视野系统
+     */
+    drawCellBasedVisibleAreas(maze, width, height, cellSize, viewSystem) {
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 // 计算Canvas坐标
@@ -438,6 +553,36 @@ class UIController {
                 } else {
                     // 不可见的单元格 - 严格隐藏（使用背景色）
                     this.ctx.fillStyle = this.config.colors.background;
+                    this.ctx.fillRect(
+                        canvasPos.x,
+                        canvasPos.y,
+                        scaledCellSize,
+                        scaledCellSize
+                    );
+                }
+            }
+        }
+    }
+    
+    /**
+     * 绘制已探索的单元格
+     */
+    drawExploredCells() {
+        if (!this.game) return;
+        
+        const maze = this.game.getMaze();
+        const { width, height } = maze.getSize();
+        const cellSize = this.config.cellSize;
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                if (this.game.isCellExplored(x, y)) {
+                    // 计算Canvas坐标
+                    const canvasPos = this.toCanvasCoords(x * cellSize, y * cellSize);
+                    const scaledCellSize = cellSize * this.canvasScale;
+                    
+                    // 绘制已探索的单元格（半透明）
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
                     this.ctx.fillRect(
                         canvasPos.x,
                         canvasPos.y,

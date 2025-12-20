@@ -27,10 +27,11 @@ class RaycastSystem {
      * @param {number} playerY - 玩家y坐标（像素）
      * @param {Maze} maze - 迷宫实例
      * @param {number} cellSize - 单元格大小（像素）
+     * @param {number} playerRadius - 玩家半径（像素，用于精确碰撞检测）
      * @returns {Array} 可见点数组
      */
-    update(playerX, playerY, maze, cellSize) {
-        const cacheKey = `${playerX.toFixed(1)},${playerY.toFixed(1)}`;
+    update(playerX, playerY, maze, cellSize, playerRadius = 0) {
+        const cacheKey = `${playerX.toFixed(1)},${playerY.toFixed(1)},${playerRadius.toFixed(1)}`;
         
         // 检查缓存
         if (this.cache.has(cacheKey)) {
@@ -56,10 +57,11 @@ class RaycastSystem {
             
             // 发射一条射线
             const rayPoints = this.castRay(
-                playerX, playerY, 
-                angle, 
-                maze, 
-                cellSize
+                playerX, playerY,
+                angle,
+                maze,
+                cellSize,
+                playerRadius
             );
             
             // 添加射线上的可见点
@@ -96,9 +98,10 @@ class RaycastSystem {
      * @param {number} angle - 射线角度（弧度）
      * @param {Maze} maze - 迷宫实例
      * @param {number} cellSize - 单元格大小
+     * @param {number} playerRadius - 玩家半径（像素）
      * @returns {Array} 射线上的可见点
      */
-    castRay(startX, startY, angle, maze, cellSize) {
+    castRay(startX, startY, angle, maze, cellSize, playerRadius = 0) {
         const points = [];
         const maxDistance = this.config.maxRayDistance * cellSize;
         const step = this.config.rayStep * cellSize;
@@ -118,7 +121,7 @@ class RaycastSystem {
             distance += step;
             
             // 检查是否碰到墙壁
-            if (this.isPointInWall(currentX, currentY, maze, cellSize)) {
+            if (this.isPointInWall(currentX, currentY, maze, cellSize, playerRadius)) {
                 // 碰到墙壁，停止射线
                 break;
             }
@@ -144,54 +147,81 @@ class RaycastSystem {
     }
     
     /**
-     * 检查点是否在墙壁内
+     * 检查点是否在墙壁内（精确像素级检测）
      * @param {number} x - x坐标
      * @param {number} y - y坐标
      * @param {Maze} maze - 迷宫实例
      * @param {number} cellSize - 单元格大小
+     * @param {number} playerRadius - 玩家半径（可选，用于精确碰撞检测）
      * @returns {boolean} 是否在墙壁内
      */
-    isPointInWall(x, y, maze, cellSize) {
+    isPointInWall(x, y, maze, cellSize, playerRadius = 0) {
         // 计算点所在的格子
         const cellX = Math.floor(x / cellSize);
         const cellY = Math.floor(y / cellSize);
         
-        // 计算点在格子内的相对位置
-        const relX = (x % cellSize) / cellSize;
-        const relY = (y % cellSize) / cellSize;
-        
         const { width, height } = maze.getSize();
         
-        // 检查是否在迷宫范围内
-        if (cellX < 0 || cellX >= width || cellY < 0 || cellY >= height) {
+        // 检查是否在迷宫范围内（考虑玩家半径）
+        if (x - playerRadius < 0 || x + playerRadius >= width * cellSize ||
+            y - playerRadius < 0 || y + playerRadius >= height * cellSize) {
             return true; // 迷宫边界视为墙壁
         }
         
-        // 检查水平墙壁（上边界）
-        if (relY < 0.1) { // 靠近上边界
-            if (maze.getWall('horizontal', cellY, cellX)) {
-                return true;
-            }
-        }
-        
-        // 检查水平墙壁（下边界）
-        if (relY > 0.9) { // 靠近下边界
-            if (maze.getWall('horizontal', cellY + 1, cellX)) {
-                return true;
-            }
-        }
-        
-        // 检查垂直墙壁（左边界）
-        if (relX < 0.1) { // 靠近左边界
-            if (maze.getWall('vertical', cellY, cellX)) {
-                return true;
-            }
-        }
-        
-        // 检查垂直墙壁（右边界）
-        if (relX > 0.9) { // 靠近右边界
-            if (maze.getWall('vertical', cellY, cellX + 1)) {
-                return true;
+        // 检查周围3×3区域的墙壁
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const checkX = cellX + dx;
+                const checkY = cellY + dy;
+                
+                // 检查水平墙壁（上边界）
+                if (maze.getWall('horizontal', checkY, checkX)) {
+                    const wallY = checkY * cellSize;
+                    const wallX1 = checkX * cellSize;
+                    const wallX2 = (checkX + 1) * cellSize;
+                    
+                    // 检查与水平墙壁的距离
+                    const distanceToWall = Math.abs(y - wallY);
+                    if (distanceToWall < playerRadius && x >= wallX1 && x <= wallX2) {
+                        return true;
+                    }
+                }
+                
+                // 检查水平墙壁（下边界）
+                if (maze.getWall('horizontal', checkY + 1, checkX)) {
+                    const wallY = (checkY + 1) * cellSize;
+                    const wallX1 = checkX * cellSize;
+                    const wallX2 = (checkX + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(y - wallY);
+                    if (distanceToWall < playerRadius && x >= wallX1 && x <= wallX2) {
+                        return true;
+                    }
+                }
+                
+                // 检查垂直墙壁（左边界）
+                if (maze.getWall('vertical', checkY, checkX)) {
+                    const wallX = checkX * cellSize;
+                    const wallY1 = checkY * cellSize;
+                    const wallY2 = (checkY + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(x - wallX);
+                    if (distanceToWall < playerRadius && y >= wallY1 && y <= wallY2) {
+                        return true;
+                    }
+                }
+                
+                // 检查垂直墙壁（右边界）
+                if (maze.getWall('vertical', checkY, checkX + 1)) {
+                    const wallX = (checkX + 1) * cellSize;
+                    const wallY1 = checkY * cellSize;
+                    const wallY2 = (checkY + 1) * cellSize;
+                    
+                    const distanceToWall = Math.abs(x - wallX);
+                    if (distanceToWall < playerRadius && y >= wallY1 && y <= wallY2) {
+                        return true;
+                    }
+                }
             }
         }
         

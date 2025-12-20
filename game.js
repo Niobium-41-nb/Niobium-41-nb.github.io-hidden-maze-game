@@ -371,7 +371,13 @@ class Game {
         
         // 使用射线检测系统更新视野
         if (this.raycastSystem) {
-            this.raycastSystem.update(this.player.x, this.player.y, this.maze, cellSize);
+            this.raycastSystem.update(
+                this.player.x,
+                this.player.y,
+                this.maze,
+                cellSize,
+                this.player.radius // 传递玩家半径参数
+            );
             
             // 获取可见单元格
             const visibleCells = this.raycastSystem.getVisibleCells();
